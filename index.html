@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>業務自動化デモ｜CSV売上集計</title>
+<style>
+  body { font-family: sans-serif; margin: 24px auto; max-width: 760px; padding: 0 16px; color: #222; }
+  h1 { font-size: 22px; }
+  .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 16px 0; }
+  label { display: block; font-weight: bold; margin: 12px 0 6px; }
+  input[type="text"] { width: 100%; padding: 8px; box-sizing: border-box; }
+  button { background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font-size: 16px; cursor: pointer; }
+  button.sub { background: #eee; color: #222; font-size: 14px; padding: 8px 12px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  .error { color: #b91c1c; }
+  .muted { color: #666; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1>📊 業務自動化デモ｜CSV売上集計</h1>
+<p class="muted">売上CSVを選ぶだけで、商品別・月別に自動集計してレポートを作ります。<br>
+Slack Webhook URLを入れた場合だけSlackへ通知します（空欄ならSlackなしで完結します）。</p>
+
+<div class="card">
+  <label>1. 売上CSVファイル</label>
+  <input type="file" id="file" accept=".csv">
+  <button class="sub" id="sampleBtn" type="button">サンプルCSVを読み込む</button>
+  <p class="muted">必要な列：日付, 商品名, 数量, 単価（英語ヘッダー date, product, quantity, unit_price もOK）</p>
+
+  <label>2. Slack Webhook URL（任意）</label>
+  <input type="text" id="webhook" placeholder="https://hooks.slack.com/services/...（空欄なら通知なし）">
+
+  <p><button id="runBtn" type="button">集計する</button></p>
+  <p id="status"></p>
+</div>
+
+<div class="card" id="resultCard" style="display:none">
+  <h2>集計結果</h2>
+  <p id="summary"></p>
+  <h3>商品別</h3>
+  <table id="byProduct"><thead><tr><th>商品名</th><th>数量</th><th>金額</th></tr></thead><tbody></tbody></table>
+  <h3>月別</h3>
+  <table id="byMonth"><thead><tr><th>月</th><th>数量</th><th>金額</th></tr></thead><tbody></tbody></table>
+  <p><button class="sub" id="downloadBtn" type="button">レポートCSVをダウンロード</button></p>
+</div>
+
+<script>
+let csvText = "";
+let reportCsv = "";
+
+document.getElementById("file").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (f) csvText = await f.text();
+});
+document.getElementById("sampleBtn").addEventListener("click", async () => {
+  csvText = await (await fetch("/sample.csv")).text();
+  document.getElementById("status").textContent = "サンプルCSVを読み込みました。「集計する」を押してください。";
+});
+document.getElementById("runBtn").addEventListener("click", async () => {
+  const status = document.getElementById("status");
+  status.className = "";
+  if (!csvText) { status.className = "error"; status.textContent = "先にCSVを選ぶか、サンプルを読み込んでください。"; return; }
+  status.textContent = "集計中…";
+  const res = await fetch("/api/aggregate", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({csv_text: csvText, slack_webhook_url: document.getElementById("webhook").value})
+  });
+  const data = await res.json();
+  if (!res.ok) { status.className = "error"; status.textContent = data.error || "エラーが発生しました"; return; }
+  reportCsv = data.report_csv;
+  document.getElementById("summary").textContent =
+    `データ ${data.row_count}件 ／ 合計 ¥${data.total_amount.toLocaleString()} ／ Slack通知：${data.slack}`;
+  const fill = (id, items) => {
+    document.querySelector(id + " tbody").innerHTML =
+      items.map(i => `<tr><td>${i.name}</td><td>${i.quantity}</td><td>¥${i.amount.toLocaleString()}</td></tr>`).join("");
+  };
+  fill("#byProduct", data.by_product);
+  fill("#byMonth", data.by_month);
+  document.getElementById("resultCard").style.display = "block";
+  status.textContent = "集計が完了しました。";
+});
+document.getElementById("downloadBtn").addEventListener("click", () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\ufeff" + reportCsv], {type: "text/csv"}));
+  a.download = "report.csv";
+  a.click();
+});
+</script>
+</body>
+</html>
